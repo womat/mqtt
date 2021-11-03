@@ -59,4 +59,64 @@ func TestSubscribePublish(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Errorf("no message received")
 	}
+
+	if err = h.Close(); err != nil {
+		t.Errorf("close failed: %v", err)
+	}
+}
+
+func TestUnsubscribe(t *testing.T) {
+	var wg sync.WaitGroup
+
+	handler1 := func(msg Message) {
+		fmt.Printf("handler 1 %v\n", msg)
+		wg.Done()
+	}
+
+	h, err := New(broker)
+	if err != nil {
+		t.Errorf("open failed: %v", err)
+	}
+
+	defer h.Close()
+
+	if err = h.Subscribe(topic1, 0, handler1); err != nil {
+		t.Errorf("subscribe handler1 failed: %v", err)
+	}
+
+	wg.Add(1)
+	if err = h.Publish(Message{Topic: topic1, Payload: []byte("test1"), Qos: 0, Retained: false}); err != nil {
+		t.Errorf("publish topic1 failed: %v", err)
+	}
+
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+	case <-time.After(time.Second):
+		t.Errorf("no message received")
+	}
+
+	if err = h.Unsubscribe(topic1); err != nil {
+		t.Errorf("unsubscribe failed: %v", err)
+	}
+
+	wg.Add(1)
+	if err = h.Publish(Message{Topic: topic1, Payload: []byte("test1"), Qos: 0, Retained: false}); err != nil {
+		t.Errorf("publish topic1 failed: %v", err)
+	}
+
+	c = make(chan struct{})
+	go func() {
+		defer close(c)
+		wg.Wait()
+	}()
+	select {
+	case <-c:
+		t.Errorf("unsubscribe failed")
+	case <-time.After(time.Second):
+	}
 }
