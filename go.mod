@@ -1,8 +1,8 @@
-module mqtt
+module github.com/womat/mqtt
 
 go 1.16
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.3.4
-	mvdan.cc/gofumpt v0.1.1 // indirect
+	golang.org/x/net v0.0.0-20201021035429-f5854403a974 // indirect
 )
