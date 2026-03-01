@@ -4,18 +4,22 @@
 // for connecting to a broker, publishing messages, and handling reconnections.
 //
 // Features:
-// - Thread-safe Handler for a single MQTT client
-// - Automatic reconnect and retry on connection loss
-// - Synchronous publish with timeout support
-// - Binary-safe logging of message payloads
-// - Safe initialization and shutdown of the client
+//   - Thread-safe Handler for a single MQTT client
+//   - Automatic reconnect and retry on connection loss
+//   - Synchronous publish with timeout support
+//   - Optional callbacks for connection and disconnection events
+//   - Safe initialization and shutdown of the client
 //
 // Example usage:
 //
-//	import "yourmodule/mqtt"
-//	import "time"
-//
-//	handler, err := mqtt.New("tcp://broker:1883", "clientID")
+//	handler, err := mqtt.New("tcp://broker:1883", "clientID",
+//	    mqtt.WithOnConnected(func() {
+//	        log.Println("MQTT connected")
+//	    }),
+//	    mqtt.WithOnConnectionLost(func(err error) {
+//	        log.Println("MQTT connection lost:", err)
+//	    }),
+//	)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -34,7 +38,6 @@ package mqtt
 
 import (
 	"errors"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -59,11 +62,18 @@ const (
 	quiesce = 250
 )
 
+var (
+	ErrClientNotInitialized = errors.New("mqtt client not initialized")
+	ErrTopicEmpty           = errors.New("mqtt topic must not be empty")
+	ErrTimeout              = errors.New("publish timeout")
+)
+
 // Handler manages a thread-safe MQTT client connection.
 type Handler struct {
-	mu     sync.Mutex
-	client mqttlib.Client
-	broker string
+	mu               sync.Mutex
+	client           mqttlib.Client
+	onConnected      func()
+	onConnectionLost func(err error)
 }
 
 // Message contains the properties of the mqtt message
@@ -74,55 +84,77 @@ type Message struct {
 	Retained bool
 }
 
-// New creates and initializes a new MQTT broker client Handler.
+// Option configures a Handler.
+type Option func(*Handler)
+
+// New creates and initializes a new MQTT Handler for the given broker.
 //
-// The returned Handler is ready to use: it sets up a client for the specified broker
-// and clientID, enables automatic reconnect and retry, and starts the initial connection.
+// It sets up the client with automatic reconnect and retry on connection loss.
+// The initial connection is attempted synchronously with a timeout. If it fails
+// or times out, the Handler is still returned and will retry in the background.
 //
-// The initial connect is attempted synchronously with a timeout. If it fails or times out,
-// the Handler is still returned and will retry connections automatically in the background.
-//
-// The Handler is thread-safe and can be used immediately for publishing messages.
+// Optional callbacks for connection events can be provided via opts.
 //
 // Parameters:
-// - broker: the MQTT broker URL (e.g., "tcp://localhost:1883")
-// - clientID: a unique client identifier
+//   - broker:		the MQTT broker URL (e.g., "tcp://localhost:1883")
+//   - clientID: 	a unique client identifier
+//   - opts: 		optional functional options, e.g. WithOnConnected, WithOnConnectionLost
 //
 // Returns:
-// - *Handler: the initialized MQTT Handler
-// - error: only returned if client creation fails; initial connection errors are logged
-func New(broker, clientID string) (*Handler, error) {
+//   - *Handler: the initialized MQTT Handler, ready to use
+//   - error:    only returned if the client cannot be created
+func New(broker, clientID string, opts ...Option) (*Handler, error) {
 	h := &Handler{}
 
-	opts := mqttlib.NewClientOptions().
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	mqttOpts := mqttlib.NewClientOptions().
 		AddBroker(broker).
 		SetClientID(clientID).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(retryInterval).
 		SetConnectionLostHandler(func(_ mqttlib.Client, err error) {
-			slog.Warn("MQTT connection lost", "error", err)
+			if h.onConnectionLost != nil {
+				h.onConnectionLost(err)
+			}
 		}).
 		SetOnConnectHandler(func(_ mqttlib.Client) {
-			slog.Info("MQTT connected", "broker", broker)
+			if h.onConnected != nil {
+				h.onConnected()
+			}
 		})
 
-	client := mqttlib.NewClient(opts)
+	client := mqttlib.NewClient(mqttOpts)
 	h.client = client
-	h.broker = broker
 
 	token := client.Connect()
 	if !token.WaitTimeout(connectTimeout) {
-		slog.Warn("Initial MQTT connect timed out, will retry in background")
-		return h, nil
+		return h, nil // Paho retries in the background, so we return the handler even if the initial connect times out
 	}
 
 	// Initially connect (non-blocking retries are handled by Paho)
 	if err := token.Error(); err != nil {
-		slog.Warn("Initial MQTT connect failed, will retry in background", "error", err)
+		return h, nil // Paho retries in the background, so we return the handler even if the initial connect fails
 	}
 
 	return h, nil
+}
+
+// WithOnConnected sets a callback that is called when the client connects.
+func WithOnConnected(fn func()) Option {
+	return func(h *Handler) {
+		h.onConnected = fn
+	}
+}
+
+// WithOnConnectionLost sets a callback that is called when the connection is lost.
+func WithOnConnectionLost(fn func(err error)) Option {
+	return func(h *Handler) {
+		h.onConnectionLost = fn
+	}
 }
 
 // Disconnect safely ends the connection to the MQTT broker.
@@ -142,16 +174,13 @@ func (m *Handler) Disconnect() {
 	if client != nil {
 		client.Disconnect(quiesce)
 	}
-
-	return
 }
 
-// Publish sends a message to the mqtt broker. If the connection is lost, it will try to reconnect.
-// If the connection can't be established, it will return an error.
-// The message is sent asynchronously. If the message can't be sent, it will be logged.
+// Publish sends a message to the MQTT broker synchronously.
+// It waits up to publishTimeout for the broker to acknowledge the message.
 func (m *Handler) Publish(msg Message) error {
 	if msg.Topic == "" {
-		return errors.New("mqtt topic must not be empty")
+		return ErrTopicEmpty
 	}
 
 	m.mu.Lock()
@@ -159,23 +188,15 @@ func (m *Handler) Publish(msg Message) error {
 	m.mu.Unlock()
 
 	if client == nil {
-		return errors.New("mqtt client not initialized")
+		return ErrClientNotInitialized
 	}
-
-	slog.Debug("Publishing MQTT message",
-		"topic", msg.Topic,
-		"qos", msg.Qos,
-		"payload_len", len(msg.Payload),
-	)
 
 	token := client.Publish(msg.Topic, msg.Qos, msg.Retained, msg.Payload)
 
 	if !token.WaitTimeout(publishTimeout) {
-		slog.Error("MQTT publish timeout", "topic", msg.Topic)
-		return errors.New("publish timeout")
+		return ErrTimeout
 	}
 	if err := token.Error(); err != nil {
-		slog.Error("MQTT publish failed", "topic", msg.Topic, "error", err)
 		return err
 	}
 
