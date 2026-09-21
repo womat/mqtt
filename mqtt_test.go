@@ -48,7 +48,7 @@ func (c *fakeClient) IsConnectionOpen() bool { return c.connectionOpen }
 func (c *fakeClient) Connect() mqttlib.Token { return newFakeToken(nil) }
 func (c *fakeClient) Disconnect(uint)        { c.disconnects++ }
 
-func (c *fakeClient) Publish(topic string, qos byte, retained bool, payload interface{}) mqttlib.Token {
+func (c *fakeClient) Publish(topic string, qos byte, retained bool, payload any) mqttlib.Token {
 	c.publishCalls++
 	c.lastTopic = topic
 	c.lastQos = qos
