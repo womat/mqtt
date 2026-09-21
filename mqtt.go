@@ -11,7 +11,7 @@
 //   - Optional logger for the connection errors the broker reports at startup
 //   - Safe initialization and shutdown of the client
 //
-// Example usage:
+// # Example usage
 //
 //	handler, err := mqtt.New("tcp://broker:1883", "clientID",
 //	    mqtt.WithOnConnected(func() {
