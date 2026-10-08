@@ -3,6 +3,7 @@ package mqtt
 import (
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,5 +254,12 @@ func TestOptions(t *testing.T) {
 
 	if (&Handler{}).logger != nil {
 		t.Error("a handler without WithLogger has a logger installed")
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	got := redactURL("tcp://user:secret@mqtt.example.com:1883")
+	if strings.Contains(got, "secret") || !strings.Contains(got, "mqtt.example.com") {
+		t.Errorf("redactURL = %q, want the host without the password", got)
 	}
 }

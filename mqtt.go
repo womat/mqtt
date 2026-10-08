@@ -45,6 +45,7 @@ package mqtt
 import (
 	"errors"
 	"log/slog"
+	"net/url"
 	"sync"
 	"time"
 
@@ -148,7 +149,7 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 		// Paho retries in the background, so we return the handler even if the initial connect times out
 		if h.logger != nil {
 			h.logger.Warn("mqtt initial connect timed out, retrying in the background",
-				"broker", broker, "timeout", connectTimeout)
+				"broker", redactURL(broker), "timeout", connectTimeout)
 		}
 		return h, nil
 	}
@@ -158,12 +159,22 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 		// Paho retries in the background, so we return the handler even if the initial connect fails
 		if h.logger != nil {
 			h.logger.Warn("mqtt initial connect failed, retrying in the background",
-				"broker", broker, "error", err)
+				"broker", redactURL(broker), "error", err)
 		}
 		return h, nil
 	}
 
 	return h, nil
+}
+
+// redactURL returns broker with a password replaced by "xxxxx", so a broker URL that
+// carries credentials (tcp://user:password@host) can be logged.
+func redactURL(broker string) string {
+	u, err := url.Parse(broker)
+	if err != nil {
+		return "<unparsable broker URL>"
+	}
+	return u.Redacted()
 }
 
 // WithLogger sets an optional logger. It is used for the connection errors that
