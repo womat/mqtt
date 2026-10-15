@@ -27,7 +27,7 @@ Sentinel errors: `ErrTopicEmpty`, `ErrInvalidQos`, `ErrClientNotInitialized`,
 `ErrNotConnected`, `ErrTimeout`.
 
 Fixed, not configurable: connect timeout 5 s, reconnect interval 2 s, publish
-timeout 5 s, quiesce 250 ms (`mqtt.go:54-70`). Everything else is the Paho
+timeout 5 s, quiesce 250 ms (`mqtt.go:55-71`). Everything else is the Paho
 default, notably `CleanSession: true`, `KeepAlive: 30s` and an in-memory
 message store.
 
@@ -45,14 +45,14 @@ err := h.Publish(mqtt.Message{Topic: "sensors/temperature", Payload: []byte("22.
 ## Delivery model
 
 `New` sets `SetAutoReconnect(true)` and `SetConnectRetry(true)`
-(`mqtt.go:129-130`), and those two flags change how Paho answers questions
+(`mqtt.go:130-131`), and those two flags change how Paho answers questions
 about the connection and what it does with a publish it cannot send right now.
 Line references below are to `github.com/eclipse/paho.mqtt.golang v1.5.1`.
 
 ### Publish refuses while no connection is open
 
 `Publish` checks `client.IsConnectionOpen()` and returns `ErrNotConnected`
-before handing anything to Paho (`mqtt.go:234-236`). That guard is the reason
+before handing anything to Paho (`mqtt.go:245-247`). That guard is the reason
 the package is usable, not an extra safety net: without it, Paho reacts to a
 publish during a reconnect as follows.
 
@@ -80,7 +80,7 @@ With the guard, both cases fail immediately and honestly. A caller that wants
 the message anyway has to buffer it itself — this package does not queue.
 
 *Unverified, but likely:* on a reconnect Paho completes only subscribe tokens
-(`client.go:575`), so a publish token left open there — and with it the
+(`client.go:575-576`), so a publish token left open there — and with it the
 reserved message ID — is never released. The guard keeps this package from
 producing such tokens in the first place.
 
@@ -101,22 +101,21 @@ check. `IsConnectionOpen()` is the one to ask, and the one `Publish` uses.
 
 ### `New` never fails
 
-All three exit paths of `New` (`mqtt.go:153,163,166`) return `nil`. A broker
+All three exit paths of `New` (`mqtt.go:154,164,167`) return `nil`. A broker
 that is unreachable, a DNS name that does not resolve, credentials that would
 be rejected — none of it reaches the caller through the return value. That is
 deliberate: a service should start even when its broker is down, and Paho
 retries in the background.
 
-What used to be missing is any trace of the failure. `WithLogger` closes that
-gap: both failure paths log a warning with the broker and the underlying
-error. To decide programmatically whether the broker was reached, call
+With `WithLogger`, both failure paths log a warning with the broker and the
+underlying error. To decide programmatically whether the broker was reached, call
 `IsConnectionOpen()` after `New`.
 
 `New` still blocks for up to 5 s at startup when the broker does not answer.
 
 ### Disconnect is final
 
-`Disconnect` sets the internal client to `nil` (`mqtt.go:199-208`). Every
+`Disconnect` sets the internal client to `nil` (`mqtt.go:210-219`). Every
 later `Publish` returns `ErrClientNotInitialized`, and there is no reconnect
 path: a new handler has to be constructed. The error name is misleading, since
 an uninitialised client cannot otherwise occur — `New` always leaves one
