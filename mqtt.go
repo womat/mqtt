@@ -108,7 +108,9 @@ type Option func(*Handler)
 // Optional callbacks for connection events can be provided via opts.
 //
 // Parameters:
-//   - broker:		the MQTT broker URL (e.g., "tcp://localhost:1883")
+//   - broker:		the MQTT broker URL (e.g., "tcp://localhost:1883"); credentials
+//     go into the URL ("tcp://user:password@host:1883"), and the schemes
+//     ssl://, tls:// and mqtts:// connect with TLS
 //   - clientID: 	a unique client identifier
 //   - opts: 		optional functional options, e.g. WithOnConnected, WithOnConnectionLost
 //

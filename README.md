@@ -56,6 +56,22 @@ defer h.Disconnect()
 err := h.Publish(mqtt.Message{Topic: "sensors/temperature", Payload: []byte("22.5"), Qos: 1})
 ```
 
+## Broker URL
+
+Authentication and TLS come from the broker URL, which `New` hands to Paho
+unchanged:
+
+| URL | Effect |
+|---|---|
+| `tcp://host:1883` (or `mqtt://`) | plain TCP |
+| `tcp://user:password@host:1883` | username and password from the URL |
+| `ssl://host:8883` (or `tls://`, `mqtts://`) | TLS with Go's default configuration: the server certificate is verified against the system roots |
+| `ws://host/mqtt`, `wss://host/mqtt` | MQTT over WebSocket |
+
+A password in the URL never reaches a log: everything this package logs goes
+through `redactURL`, which replaces it with `xxxxx`. Keep the URL itself out of
+`config.yaml` in plain text — reference an environment variable instead.
+
 ## Delivery model
 
 `New` sets `SetAutoReconnect(true)` and `SetConnectRetry(true)`
@@ -167,8 +183,10 @@ have.
 Known and deliberately left alone, so that a future version does not have to
 rediscover it:
 
-- No authentication: there is no option for username/password, TLS, or client
-  certificates. A broker that requires any of them cannot be used.
+- No client certificates and no TLS configuration of its own: TLS always uses
+  Go's defaults (system roots, server certificate verified), so a broker that
+  wants mutual TLS or a private CA not in the system store cannot be used.
+  Username and password work through the URL, see [Broker URL](#broker-url).
 - No `Subscribe`. The package doc calls this an "MQTT client handler", but it
   only publishes.
 - No buffering. A message published while the connection is down is rejected,
