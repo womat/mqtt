@@ -1,5 +1,19 @@
 # mqtt
 
+[![CI](https://github.com/womat/mqtt/actions/workflows/ci.yml/badge.svg)](https://github.com/womat/mqtt/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/womat/mqtt.svg)](https://pkg.go.dev/github.com/womat/mqtt)
+
+```sh
+go get github.com/womat/mqtt
+```
+
+This module used to be part of
+[github.com/womat/golib](https://github.com/womat/golib) as `golib/mqtt`. The
+API is unchanged; only the import path differs. The copy in golib is
+deprecated and is removed there in golib v2. Versions `v0.1.0` and `v0.2.0` of
+this repository are an unrelated draft from 2021 with a different API; use
+`v1.0.0` or later.
+
 A thread-safe wrapper around the Eclipse Paho MQTT client for the one thing
 the services in this ecosystem do with MQTT: connect to a broker and publish
 telemetry. Reconnecting is left to Paho, publishing is synchronous, and the
@@ -131,11 +145,11 @@ a publish topic are **not** rejected.
 ## Testing
 
 ```sh
-go test -race ./mqtt/
-MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./mqtt/
+go test -race ./...
+MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./...
 ```
 
-Coverage is 68.6 % of statements without a broker. `mqtt_test.go` runs without
+Coverage is 66.2 % of statements without a broker. `mqtt_test.go` runs without
 one: it substitutes a fake for the `mqtt.Client` interface, which is what makes
 the states above testable at all: a fake in the reconnecting state
 (`IsConnected() == true`, `IsConnectionOpen() == false`) is how the silent

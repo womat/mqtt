@@ -1,0 +1,12 @@
+# golangci-lint configuration for github.com/womat/mqtt.
+# The default linter set is kept.
+
+version: "2"
+
+linters:
+  exclusions:
+    rules:
+      # Test code may ignore what it is not asserting on.
+      - path: _test\.go
+        linters:
+          - errcheck
