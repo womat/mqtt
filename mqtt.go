@@ -46,6 +46,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +77,7 @@ var (
 	ErrInvalidQos           = errors.New("mqtt qos must be 0, 1 or 2")
 	ErrNotConnected         = errors.New("mqtt not connected to the broker")
 	ErrTimeout              = errors.New("publish timeout")
+	ErrInvalidBroker        = errors.New("mqtt broker URL cannot be parsed")
 )
 
 // Handler manages a thread-safe MQTT client connection.
@@ -116,9 +118,10 @@ type Option func(*Handler)
 //
 // Returns:
 //   - *Handler: the initialized MQTT Handler, ready to use
-//   - error:    always nil; a failed initial connection is not an error here,
-//     it is retried in the background. Pass WithLogger to see it, or ask
-//     IsConnectionOpen whether the broker was actually reached.
+//   - error:    ErrInvalidBroker if broker cannot be parsed, otherwise nil; a
+//     failed initial connection is not an error here, it is retried in the
+//     background. Pass WithLogger to see it, or ask IsConnectionOpen whether
+//     the broker was actually reached.
 func New(broker, clientID string, opts ...Option) (*Handler, error) {
 	h := &Handler{}
 
@@ -142,6 +145,12 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 				h.onConnected()
 			}
 		})
+
+	// Paho drops a broker URL it cannot parse without a word, and a client
+	// without one fails its connect once and never retries.
+	if len(mqttOpts.Servers) == 0 {
+		return nil, ErrInvalidBroker
+	}
 
 	client := mqttlib.NewClient(mqttOpts)
 	h.client = client
@@ -171,7 +180,13 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 
 // redactURL returns broker with a password replaced by "xxxxx", so a broker URL that
 // carries credentials (tcp://user:password@host) can be logged.
+//
+// Like Paho, it reads a URL without a scheme as tcp://; otherwise url.Parse would
+// take "user" in user:password@host for the scheme and leave the password unredacted.
 func redactURL(broker string) string {
+	if !strings.Contains(broker, "://") {
+		broker = "tcp://" + broker
+	}
 	u, err := url.Parse(broker)
 	if err != nil {
 		return "<unparsable broker URL>"

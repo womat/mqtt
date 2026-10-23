@@ -2,19 +2,22 @@ package mqtt
 
 import (
 	"errors"
-	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
 
 	mqttlib "github.com/eclipse/paho.mqtt.golang"
+	"github.com/eclipse/paho.mqtt.golang/packets"
 )
 
 // fakeToken is a token that is already complete when it is handed out,
-// which is how paho behaves for a publish it decides not to send.
+// which is how paho behaves for a publish it decides not to send. A pending
+// token never completes, like a QoS 1 publish the broker does not acknowledge.
 type fakeToken struct {
-	err  error
-	done chan struct{}
+	err     error
+	pending bool
+	done    chan struct{}
 }
 
 func newFakeToken(err error) *fakeToken {
@@ -23,8 +26,8 @@ func newFakeToken(err error) *fakeToken {
 	return t
 }
 
-func (t *fakeToken) Wait() bool                     { return true }
-func (t *fakeToken) WaitTimeout(time.Duration) bool { return true }
+func (t *fakeToken) Wait() bool                     { return !t.pending }
+func (t *fakeToken) WaitTimeout(time.Duration) bool { return !t.pending }
 func (t *fakeToken) Done() <-chan struct{}          { return t.done }
 func (t *fakeToken) Error() error                   { return t.err }
 
@@ -36,6 +39,7 @@ type fakeClient struct {
 	connected      bool // paho: true while connecting or reconnecting as well
 	connectionOpen bool // paho: true only while actually connected
 	publishErr     error
+	publishPending bool
 	publishCalls   int
 	lastTopic      string
 	lastQos        byte
@@ -56,6 +60,10 @@ func (c *fakeClient) Publish(topic string, qos byte, retained bool, payload any)
 	c.lastRetained = retained
 	if b, ok := payload.([]byte); ok {
 		c.lastPayload = b
+	}
+	if c.publishPending {
+		// Done is never closed: the token stays open for good.
+		return &fakeToken{pending: true, done: make(chan struct{})}
 	}
 	return newFakeToken(c.publishErr)
 }
@@ -143,6 +151,18 @@ func TestPublishPropagatesTokenError(t *testing.T) {
 	}
 }
 
+func TestPublishTimeout(t *testing.T) {
+	// A token that is still open after publishTimeout has no error yet; without
+	// the WaitTimeout check Publish would report it as success.
+	client := connectedClient()
+	client.publishPending = true
+	h := &Handler{client: client}
+
+	if err := h.Publish(Message{Topic: "a/b", Qos: 1}); !errors.Is(err, ErrTimeout) {
+		t.Errorf("got %v, want ErrTimeout", err)
+	}
+}
+
 func TestPublishRejectsBadMessages(t *testing.T) {
 	tests := []struct {
 		name string
@@ -220,46 +240,125 @@ func TestConnectionState(t *testing.T) {
 	}
 }
 
-func TestOptions(t *testing.T) {
-	h := &Handler{}
-
-	logger := slog.New(slog.DiscardHandler)
-	connected := false
-	var lostErr error
-
-	for _, opt := range []Option{
-		WithLogger(logger),
-		WithOnConnected(func() { connected = true }),
-		WithOnConnectionLost(func(err error) { lostErr = err }),
+func TestRedactURL(t *testing.T) {
+	for _, broker := range []string{
+		"tcp://user:secret@mqtt.example.com:1883",
+		// Paho accepts a URL without a scheme and reads it as tcp://.
+		"user:secret@mqtt.example.com:1883",
 	} {
-		opt(h)
+		got := redactURL(broker)
+		if strings.Contains(got, "secret") || !strings.Contains(got, "mqtt.example.com") {
+			t.Errorf("redactURL(%q) = %q, want the host without the password", broker, got)
+		}
 	}
 
-	if h.logger != logger {
-		t.Error("WithLogger did not install the logger")
-	}
-	if h.onConnected == nil || h.onConnectionLost == nil {
-		t.Fatal("callbacks were not installed")
-	}
-
-	h.onConnected()
-	h.onConnectionLost(errors.New("boom"))
-
-	if !connected {
-		t.Error("onConnected was not called")
-	}
-	if lostErr == nil {
-		t.Error("onConnectionLost was not called")
-	}
-
-	if (&Handler{}).logger != nil {
-		t.Error("a handler without WithLogger has a logger installed")
+	if got := redactURL("tcp://user:se%zzret@mqtt.example.com:1883"); strings.Contains(got, "se%zzret") {
+		t.Errorf("redactURL of an unparsable URL = %q, want it without the password", got)
 	}
 }
 
-func TestRedactURL(t *testing.T) {
-	got := redactURL("tcp://user:secret@mqtt.example.com:1883")
-	if strings.Contains(got, "secret") || !strings.Contains(got, "mqtt.example.com") {
-		t.Errorf("redactURL = %q, want the host without the password", got)
+// fakeBroker listens on a local port and answers each CONNECT with CONNACK,
+// which is all paho needs to consider itself connected. Each connection goes
+// to the test, which reads what the client sends and drops it.
+func fakeBroker(t *testing.T) (broker string, conns <-chan net.Conn) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	ch := make(chan net.Conn, 2)
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return // listener closed by the cleanup
+			}
+			if _, err := packets.ReadPacket(conn); err != nil {
+				conn.Close()
+				continue
+			}
+			// A fresh CONNACK has return code 0, "connection accepted".
+			if err := packets.NewControlPacket(packets.Connack).Write(conn); err != nil {
+				conn.Close()
+				continue
+			}
+			ch <- conn
+		}
+	}()
+	return "tcp://" + l.Addr().String(), ch
+}
+
+// receive waits for the next value on ch and fails the test after 5 s.
+func receive[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		var zero T
+		return zero
+	}
+}
+
+func TestNewAgainstBroker(t *testing.T) {
+	// New against a broker that answers: the callbacks fire, Publish reaches
+	// the wire, and a dropped connection is reestablished on its own.
+	broker, conns := fakeBroker(t)
+	connected := make(chan struct{}, 2)
+	lost := make(chan error, 1)
+
+	h, err := New(broker, "test",
+		WithOnConnected(func() { connected <- struct{}{} }),
+		WithOnConnectionLost(func(err error) { lost <- err }))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer h.Disconnect()
+
+	conn := receive(t, conns, "the client to connect")
+	defer conn.Close()
+	receive(t, connected, "onConnected")
+	if !h.IsConnectionOpen() {
+		t.Fatal("IsConnectionOpen() = false after a successful connect")
+	}
+
+	if err := h.Publish(Message{Topic: "sensors/temperature", Payload: []byte("22.5")}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	p, err := packets.ReadPacket(conn)
+	if err != nil {
+		t.Fatalf("reading the published packet: %v", err)
+	}
+	pub, ok := p.(*packets.PublishPacket)
+	if !ok {
+		t.Fatalf("broker received %T, want a PUBLISH", p)
+	}
+	if pub.TopicName != "sensors/temperature" || string(pub.Payload) != "22.5" {
+		t.Errorf("broker received %q %q, want sensors/temperature 22.5", pub.TopicName, pub.Payload)
+	}
+
+	conn.Close()
+	receive(t, lost, "onConnectionLost")
+
+	reconn := receive(t, conns, "the client to reconnect")
+	defer reconn.Close()
+	receive(t, connected, "onConnected after the reconnect")
+}
+
+func TestNewInvalidBroker(t *testing.T) {
+	// An unescaped % in the password makes the URL unparsable. Paho would drop
+	// it and never connect, so New must say so instead of returning a dead handler.
+	h, err := New("tcp://user:se%zzret@mqtt.example.com:1883", "id")
+	if !errors.Is(err, ErrInvalidBroker) {
+		t.Errorf("got error %v, want ErrInvalidBroker", err)
+	}
+	if h != nil {
+		t.Error("New returned a handler for an unparsable broker URL")
 	}
 }

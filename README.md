@@ -27,7 +27,7 @@ would otherwise discard the message and call it a success.
 
 | Function | Comment |
 |---|---|
-| `func New(broker, clientID string, opts ...Option) (*Handler, error)` | creates the client and attempts one connect; the error is **always** `nil`, see [`New` never fails](#new-never-fails) |
+| `func New(broker, clientID string, opts ...Option) (*Handler, error)` | creates the client and attempts one connect; the only error is `ErrInvalidBroker`, see [`New` fails only on an unparsable URL](#new-fails-only-on-an-unparsable-url) |
 | `func WithLogger(l *slog.Logger) Option` | the only thing that reports a failed initial connection |
 | `func WithOnConnected(fn func()) Option` | called on every successful connect, including reconnects |
 | `func WithOnConnectionLost(fn func(err error)) Option` | called when an established connection drops |
@@ -38,7 +38,7 @@ would otherwise discard the message and call it a success.
 | `type Message struct{ Topic string; Payload []byte; Qos byte; Retained bool }` | the message to publish |
 
 Sentinel errors: `ErrTopicEmpty`, `ErrInvalidQos`, `ErrClientNotInitialized`,
-`ErrNotConnected`, `ErrTimeout`.
+`ErrNotConnected`, `ErrTimeout`, `ErrInvalidBroker`.
 
 Fixed, not configurable: connect timeout 5 s, reconnect interval 2 s, publish
 timeout 5 s, quiesce 250 ms (`mqtt.go:55-71`). Everything else is the Paho
@@ -69,8 +69,13 @@ unchanged:
 | `ws://host/mqtt`, `wss://host/mqtt` | MQTT over WebSocket |
 
 A password in the URL never reaches a log: everything this package logs goes
-through `redactURL`, which replaces it with `xxxxx`. Keep the URL itself out of
+through `redactURL`, which replaces it with `xxxxx` — also in a URL without a
+scheme, which Paho reads as `tcp://`. Keep the URL itself out of
 `config.yaml` in plain text — reference an environment variable instead.
+
+A URL that cannot be parsed — typically a password with an unescaped `%` —
+makes `New` return `ErrInvalidBroker`. Paho would otherwise drop it silently
+and never connect. Escape special characters in the password (`%25` for `%`).
 
 ## Delivery model
 
@@ -129,9 +134,11 @@ So `IsConnected()` answers "is this handler still trying?" — useful to tell a
 live handler from one that has been disconnected, useless as a broker health
 check. `IsConnectionOpen()` is the one to ask, and the one `Publish` uses.
 
-### `New` never fails
+### `New` fails only on an unparsable URL
 
-All three exit paths of `New` (`mqtt.go:154,164,167`) return `nil`. A broker
+`New` returns an error only for a broker URL that cannot be parsed
+(`ErrInvalidBroker`, see [Broker URL](#broker-url)): that is a configuration
+error, and Paho would never retry it. Everything else returns `nil`. A broker
 that is unreachable, a DNS name that does not resolve, credentials that would
 be rejected — none of it reaches the caller through the return value. That is
 deliberate: a service should start even when its broker is down, and Paho
@@ -165,18 +172,21 @@ go test -race ./...
 MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./...
 ```
 
-Coverage is 66.2 % of statements without a broker. `mqtt_test.go` runs without
+Coverage is 88.4 % of statements without a broker. `mqtt_test.go` runs without
 one: it substitutes a fake for the `mqtt.Client` interface, which is what makes
 the states above testable at all: a fake in the reconnecting state
 (`IsConnected() == true`, `IsConnectionOpen() == false`) is how the silent
-QoS 0 loss is pinned down.
+QoS 0 loss is pinned down. `New` itself runs against a fake broker in the
+test, a local listener that answers each CONNECT with CONNACK: it checks the
+callbacks, a publish arriving on the wire, and the reconnect after a dropped
+connection.
 
 `mqtt_example_test.go` is the runnable version of the package documentation
 and needs a real broker; it skips unless `MQTT_TEST_BROKER` names one.
 
-Not covered: `New` itself, and therefore the logging of a failed initial
-connect — that path needs either a broker or a seam that the package does not
-have.
+Not covered: the logging of a failed initial connect. With `ConnectRetry`
+Paho only gives up on a broker that never answers after the full 5 s, which is
+too slow for a unit test.
 
 ## Not addressed
 
