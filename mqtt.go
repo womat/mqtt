@@ -55,9 +55,14 @@ const (
 	// Paho keeps retrying either way; the timeout only bounds how long New blocks.
 	connectTimeout = 5 * time.Second
 
-	// retryInterval defines the wait time between automatic reconnect attempts
-	// when the connection to the broker is lost.
+	// retryInterval is the wait between attempts of the initial connect. It does
+	// not apply after a lost connection; see maxReconnectInterval.
 	retryInterval = 2 * time.Second
+
+	// maxReconnectInterval caps Paho's backoff after a lost connection, which
+	// starts at 1 s and grows with each failed attempt. Paho's default cap of
+	// 10 min would leave a service silent that long after its broker is back.
+	maxReconnectInterval = time.Minute
 
 	// publishTimeout defines the maximum duration to wait for a Publish() token to complete.
 	// If the token is not done within this time, Publish() returns an error.
@@ -132,6 +137,7 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(retryInterval).
+		SetMaxReconnectInterval(maxReconnectInterval).
 		SetConnectionLostHandler(func(_ mqttlib.Client, err error) {
 			if h.onConnectionLost != nil {
 				h.onConnectionLost(err)

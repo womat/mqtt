@@ -363,6 +363,11 @@ func TestNewAgainstBroker(t *testing.T) {
 	if !h.IsConnectionOpen() {
 		t.Fatal("IsConnectionOpen() = false after a successful connect")
 	}
+	// Only the setting: the backoff it caps takes minutes to reach.
+	opts := h.current().OptionsReader()
+	if got := opts.MaxReconnectInterval(); got != maxReconnectInterval {
+		t.Errorf("MaxReconnectInterval = %v, want %v", got, maxReconnectInterval)
+	}
 
 	if err := h.Publish(Message{Topic: "sensors/temperature", Payload: []byte("22.5")}); err != nil {
 		t.Fatalf("Publish: %v", err)

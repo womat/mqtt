@@ -40,8 +40,10 @@ would otherwise discard the message and call it a success.
 Sentinel errors: `ErrTopicEmpty`, `ErrInvalidQos`, `ErrClientNotInitialized`,
 `ErrNotConnected`, `ErrTimeout`, `ErrInvalidBroker`.
 
-Fixed, not configurable: connect timeout 5 s, reconnect interval 2 s, publish
-timeout 5 s, quiesce 250 ms (the constants at the top of `mqtt.go`). Everything else is the Paho
+Fixed, not configurable: connect timeout 5 s, retry interval of the initial
+connect 2 s, reconnect after a lost connection with Paho's backoff from 1 s up
+to 1 min (Paho's default cap is 10 min), publish timeout 5 s, quiesce 250 ms
+(the constants at the top of `mqtt.go`). Everything else is the Paho
 default, notably `CleanSession: true`, `KeepAlive: 30s` and an in-memory
 message store.
 
@@ -210,7 +212,7 @@ rediscover it:
   drops between the check and Paho's `Publish`, a QoS 0 message is lost
   silently after all. Closing it would take a change in Paho; QoS 1 or 2 ends
   in `ErrTimeout` instead.
-- Connect timeout, retry interval, publish timeout, quiesce and Paho's own
+- Connect timeout, retry interval, reconnect cap, publish timeout, quiesce and Paho's own
   `CleanSession`/`KeepAlive` are compiled-in constants rather than options,
   unlike the rest of the repository.
 - `New` blocks for up to 5 s at startup when the broker is unreachable, and
