@@ -51,8 +51,8 @@ import (
 )
 
 const (
-	// connectTimeout defines the maximum duration to wait for the initial broker connection.
-	// After this timeout, the handler will retry connecting in the background.
+	// connectTimeout is how long New waits for the initial broker connection.
+	// Paho keeps retrying either way; the timeout only bounds how long New blocks.
 	connectTimeout = 5 * time.Second
 
 	// retryInterval defines the wait time between automatic reconnect attempts
@@ -107,11 +107,11 @@ type Option func(*Handler)
 // Optional callbacks for connection events can be provided via opts.
 //
 // Parameters:
-//   - broker:		the MQTT broker URL (e.g., "tcp://localhost:1883"); credentials
+//   - broker: the MQTT broker URL (e.g., "tcp://localhost:1883"); credentials
 //     go into the URL ("tcp://user:password@host:1883"), and the schemes
 //     ssl://, tls:// and mqtts:// connect with TLS
-//   - clientID: 	a unique client identifier
-//   - opts: 		optional functional options, e.g. WithOnConnected, WithOnConnectionLost
+//   - clientID: a unique client identifier
+//   - opts: optional functional options, e.g. WithOnConnected, WithOnConnectionLost
 //
 // Returns:
 //   - *Handler: the initialized MQTT Handler, ready to use

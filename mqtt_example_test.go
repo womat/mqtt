@@ -16,9 +16,9 @@ func Test_Example(t *testing.T) {
 		t.Skip("set MQTT_TEST_BROKER to run this test against a real broker")
 	}
 
-	// New never reports an error: a broker that is down is retried in the
-	// background, so ask IsConnectionOpen whether it was actually reached.
-	m, _ := New(broker, "clientID",
+	// New fails only on an unparsable URL: a broker that is down is retried in
+	// the background, so ask IsConnectionOpen whether it was actually reached.
+	m, err := New(broker, "clientID",
 		WithLogger(slog.Default()),
 		WithOnConnected(func() {
 			slog.Info("MQTT connected", "broker", broker)
@@ -26,6 +26,9 @@ func Test_Example(t *testing.T) {
 		WithOnConnectionLost(func(err error) {
 			slog.Warn("MQTT connection lost", "error", err)
 		}))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
 
 	defer m.Disconnect()
 

@@ -46,14 +46,17 @@ default, notably `CleanSession: true`, `KeepAlive: 30s` and an in-memory
 message store.
 
 ```go
-h, _ := mqtt.New("tcp://broker:1883", "clientID",
+h, err := mqtt.New("tcp://broker:1883", "clientID",
     mqtt.WithLogger(slog.Default()),
     mqtt.WithOnConnected(func() { slog.Info("MQTT connected") }),
     mqtt.WithOnConnectionLost(func(err error) { slog.Warn("MQTT lost", "error", err) }),
 )
+if err != nil {
+    log.Fatal(err) // ErrInvalidBroker: the URL cannot be parsed
+}
 defer h.Disconnect()
 
-err := h.Publish(mqtt.Message{Topic: "sensors/temperature", Payload: []byte("22.5"), Qos: 1})
+err = h.Publish(mqtt.Message{Topic: "sensors/temperature", Payload: []byte("22.5"), Qos: 1})
 ```
 
 ## Broker URL
