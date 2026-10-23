@@ -1,7 +1,9 @@
 package mqtt
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"sync"
@@ -294,12 +296,12 @@ func TestRedactURL(t *testing.T) {
 	}
 }
 
-// fakeBroker listens on a local port and answers each CONNECT with CONNACK,
-// which is all paho needs to consider itself connected. Each connection goes
-// to the test, which reads what the client sends and drops it.
-func fakeBroker(t *testing.T) (broker string, conns <-chan net.Conn) {
+// fakeBroker listens on addr and answers each CONNECT with CONNACK, which is
+// all paho needs to consider itself connected. Each connection goes to the
+// test, which reads what the client sends and drops it.
+func fakeBroker(t *testing.T, addr string) (broker string, conns <-chan net.Conn) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +345,7 @@ func receive[T any](t *testing.T, ch <-chan T, what string) T {
 func TestNewAgainstBroker(t *testing.T) {
 	// New against a broker that answers: the callbacks fire, Publish reaches
 	// the wire, and a dropped connection is reestablished on its own.
-	broker, conns := fakeBroker(t)
+	broker, conns := fakeBroker(t, "127.0.0.1:0")
 	connected := make(chan struct{}, 2)
 	lost := make(chan error, 1)
 
@@ -386,6 +388,81 @@ func TestNewAgainstBroker(t *testing.T) {
 	reconn := receive(t, conns, "the client to reconnect")
 	defer reconn.Close()
 	receive(t, connected, "onConnected after the reconnect")
+}
+
+func TestNewRetriesUntilBrokerIsUp(t *testing.T) {
+	// A service may start before its broker. New must keep trying and connect
+	// once the broker is up, not give up after the first refused connect.
+	t.Parallel()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+
+	type result struct {
+		h   *Handler
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		h, err := New("tcp://"+addr, "test")
+		done <- result{h, err}
+	}()
+
+	// The first connect is refused; the broker is up before the retry 2 s later.
+	time.Sleep(time.Second)
+	_, conns := fakeBroker(t, addr)
+
+	r := receive(t, done, "New to return")
+	if r.err != nil {
+		t.Fatalf("New: %v", r.err)
+	}
+	defer r.h.Disconnect()
+	if !r.h.IsConnectionOpen() {
+		t.Fatal("New returned without a connection although the broker came up within its timeout")
+	}
+	conn := receive(t, conns, "the client to connect")
+	defer conn.Close()
+}
+
+func TestNewLogsTimeoutWithoutPassword(t *testing.T) {
+	// The warning about a slow initial connect is the only thing this package
+	// logs, and it names the broker. The password in the URL must not reach it.
+	// Takes the full connect timeout of 5 s.
+	t.Parallel()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+
+	// Accepts the connection and never answers it, so the connect times out.
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		if conn, err := l.Accept(); err == nil {
+			accepted <- conn
+		}
+	}()
+
+	var buf bytes.Buffer
+	h, err := New("tcp://user:secret@"+l.Addr().String(), "test",
+		WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer h.Disconnect()
+	conn := receive(t, accepted, "the client to connect")
+	defer conn.Close()
+
+	out := buf.String()
+	if !strings.Contains(out, "timed out") {
+		t.Errorf("no warning about the timed-out connect, log: %q", out)
+	}
+	if strings.Contains(out, "secret") {
+		t.Errorf("the password reached the log: %q", out)
+	}
 }
 
 func TestNewInvalidBroker(t *testing.T) {

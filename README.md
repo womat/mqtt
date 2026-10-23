@@ -179,21 +179,19 @@ go test -race ./...
 MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./...
 ```
 
-Coverage is 94.3 % of statements without a broker. `mqtt_test.go` runs without
+Coverage is 100 % of statements without a broker. `mqtt_test.go` runs without
 one: it substitutes a fake for the `mqtt.Client` interface, which is what makes
 the states above testable at all: a fake in the reconnecting state
 (`IsConnected() == true`, `IsConnectionOpen() == false`) is how the silent
 QoS 0 loss is pinned down. `New` itself runs against a fake broker in the
 test, a local listener that answers each CONNECT with CONNACK: it checks the
-callbacks, a publish arriving on the wire, and the reconnect after a dropped
-connection.
+callbacks, a publish arriving on the wire, the reconnect after a dropped
+connection, a first connect that succeeds only on a retry, and the warning
+about an initial connect that times out — without the password from the URL.
+That last test waits the full 5 s.
 
 `mqtt_example_test.go` is the runnable version of the package documentation
 and needs a real broker; it skips unless `MQTT_TEST_BROKER` names one.
-
-Not covered: the logging of a failed initial connect. With `ConnectRetry`
-Paho only gives up on a broker that never answers after the full 5 s, which is
-too slow for a unit test.
 
 ## Not addressed
 
