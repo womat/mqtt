@@ -152,26 +152,13 @@ func New(broker, clientID string, opts ...Option) (*Handler, error) {
 	client := mqttlib.NewClient(mqttOpts)
 	h.client = client
 
-	token := client.Connect()
-	if !token.WaitTimeout(connectTimeout) {
-		// Paho retries in the background, so we return the handler even if the initial connect times out
-		if h.logger != nil {
-			h.logger.Warn("mqtt initial connect timed out, retrying in the background",
-				"broker", redactURL(broker), "timeout", connectTimeout)
-		}
-		return h, nil
+	// With ConnectRetry the token completes only on success: Paho retries every
+	// connect error itself and reports none of them, so a timeout is the only
+	// failure New can see.
+	if !client.Connect().WaitTimeout(connectTimeout) && h.logger != nil {
+		h.logger.Warn("mqtt initial connect timed out, retrying in the background",
+			"broker", redactURL(broker), "timeout", connectTimeout)
 	}
-
-	// Initially connect (non-blocking retries are handled by Paho)
-	if err := token.Error(); err != nil {
-		// Paho retries in the background, so we return the handler even if the initial connect fails
-		if h.logger != nil {
-			h.logger.Warn("mqtt initial connect failed, retrying in the background",
-				"broker", redactURL(broker), "error", err)
-		}
-		return h, nil
-	}
-
 	return h, nil
 }
 
