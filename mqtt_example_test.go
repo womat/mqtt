@@ -9,7 +9,7 @@ import (
 // Test_Example is the runnable version of the package documentation. It needs a
 // real broker and is skipped unless one is named in MQTT_TEST_BROKER, e.g.
 //
-//	MQTT_TEST_BROKER=tcp://localhost:1883 go test ./mqtt/
+//	MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./...
 func Test_Example(t *testing.T) {
 	broker := os.Getenv("MQTT_TEST_BROKER")
 	if broker == "" {

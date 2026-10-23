@@ -41,7 +41,7 @@ Sentinel errors: `ErrTopicEmpty`, `ErrInvalidQos`, `ErrClientNotInitialized`,
 `ErrNotConnected`, `ErrTimeout`, `ErrInvalidBroker`.
 
 Fixed, not configurable: connect timeout 5 s, reconnect interval 2 s, publish
-timeout 5 s, quiesce 250 ms (`mqtt.go:55-71`). Everything else is the Paho
+timeout 5 s, quiesce 250 ms (the constants at the top of `mqtt.go`). Everything else is the Paho
 default, notably `CleanSession: true`, `KeepAlive: 30s` and an in-memory
 message store.
 
@@ -79,15 +79,15 @@ and never connect. Escape special characters in the password (`%25` for `%`).
 
 ## Delivery model
 
-`New` sets `SetAutoReconnect(true)` and `SetConnectRetry(true)`
-(`mqtt.go:130-131`), and those two flags change how Paho answers questions
+`New` sets `SetAutoReconnect(true)` and `SetConnectRetry(true)`, and those
+two flags change how Paho answers questions
 about the connection and what it does with a publish it cannot send right now.
 Line references below are to `github.com/eclipse/paho.mqtt.golang v1.5.1`.
 
 ### Publish refuses while no connection is open
 
 `Publish` checks `client.IsConnectionOpen()` and returns `ErrNotConnected`
-before handing anything to Paho (`mqtt.go:245-247`). That guard is the reason
+before handing anything to Paho. That guard is the reason
 the package is usable, not an extra safety net: without it, Paho reacts to a
 publish during a reconnect as follows.
 
@@ -144,15 +144,19 @@ be rejected — none of it reaches the caller through the return value. That is
 deliberate: a service should start even when its broker is down, and Paho
 retries in the background.
 
-With `WithLogger`, both failure paths log a warning with the broker and the
-underlying error. To decide programmatically whether the broker was reached, call
+With `WithLogger`, `New` logs a warning with the broker when the initial
+connect has not succeeded within 5 s. The warning names no cause: with
+`ConnectRetry`, Paho retries every connect error every 2 s without reporting
+it (`client.go:263-275`) — an unreachable host, a name that does not resolve
+and a rejected password look the same, a connection that never opens. To
+decide programmatically whether the broker was reached, call
 `IsConnectionOpen()` after `New`.
 
 `New` still blocks for up to 5 s at startup when the broker does not answer.
 
 ### Disconnect is final
 
-`Disconnect` sets the internal client to `nil` (`mqtt.go:210-219`). Every
+`Disconnect` sets the internal client to `nil`. Every
 later `Publish` returns `ErrClientNotInitialized`, and there is no reconnect
 path: a new handler has to be constructed. The error name is misleading, since
 an uninitialised client cannot otherwise occur — `New` always leaves one

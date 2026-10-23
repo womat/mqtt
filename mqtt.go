@@ -8,33 +8,30 @@
 //   - Automatic reconnect and retry on connection loss
 //   - Synchronous publish with timeout support, refused while no connection is open
 //   - Optional callbacks for connection and disconnection events
-//   - Optional logger for the connection errors the broker reports at startup
+//   - Optional logger for an initial connect that does not succeed in time
 //   - Safe initialization and shutdown of the client
 //
 // # Example usage
 //
-//	handler, err := mqtt.New("tcp://broker:1883", "clientID",
-//	    mqtt.WithOnConnected(func() {
-//	        log.Println("MQTT connected")
-//	    }),
-//	    mqtt.WithOnConnectionLost(func(err error) {
-//	        log.Println("MQTT connection lost:", err)
-//	    }),
+// The same steps as Example_usage in example_test.go:
+//
+//	h, err := mqtt.New("tcp://broker:1883", "sensor-livingroom",
 //	    mqtt.WithLogger(slog.Default()),
+//	    mqtt.WithOnConnected(func() { slog.Info("MQTT connected") }),
+//	    mqtt.WithOnConnectionLost(func(err error) { slog.Warn("MQTT connection lost", "error", err) }),
 //	)
 //	if err != nil {
-//	    log.Fatal(err)
+//	    log.Fatal(err) // ErrInvalidBroker: the URL cannot be parsed
 //	}
-//	defer handler.Disconnect()
+//	defer h.Disconnect()
 //
-//	msg := mqtt.Message{
-//	    Topic:   "sensors/temperature",
+//	err = h.Publish(mqtt.Message{
+//	    Topic:   "sensors/livingroom/temperature",
 //	    Payload: []byte("22.5"),
 //	    Qos:     1,
-//	}
-//
-//	if err := handler.Publish(msg); err != nil {
-//	    log.Println("Publish failed:", err)
+//	})
+//	if err != nil {
+//	    log.Println("publish failed:", err)
 //	}
 //
 // Publish only hands a message to the broker while a connection is actually
@@ -194,8 +191,10 @@ func redactURL(broker string) string {
 	return u.Redacted()
 }
 
-// WithLogger sets an optional logger. It is used for the connection errors that
-// New would otherwise swallow; nothing else in this package logs.
+// WithLogger sets an optional logger. New warns through it when the initial
+// connect has not succeeded within its timeout; nothing else in this package
+// logs. The warning names no cause: Paho retries every connect error, a
+// rejected password included, without reporting it.
 func WithLogger(l *slog.Logger) Option {
 	return func(h *Handler) {
 		h.logger = l
@@ -219,8 +218,8 @@ func WithOnConnectionLost(fn func(err error)) Option {
 // Disconnect safely ends the connection to the MQTT broker.
 //
 // This method is thread-safe and sets the internal client to nil before
-// actually disconnecting, so that concurrent Publish or Connect calls
-// will see the client as uninitialized.
+// actually disconnecting, so that a concurrent Publish sees the client as
+// uninitialized.
 //
 // The disconnect uses a quiesce period to allow pending work to complete.
 // If no client is initialized, this method does nothing.

@@ -40,7 +40,8 @@ functional options.
 
 ## Conventions
 
-- The package doc comment with a runnable `# Example usage` section lives in `mqtt.go`;
+- The package doc comment with an `# Example usage` section lives in `mqtt.go`; it shows
+  the same steps as `Example_usage` in `example_test.go`, which the compiler checks;
   `README.md` covers the package and ends with *Not addressed* — decisions against a fix go
   there. Keep both updated when the API changes.
 - Sentinel errors are exported vars compared with `errors.Is`; their messages start with
