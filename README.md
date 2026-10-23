@@ -205,6 +205,10 @@ rediscover it:
   only publishes.
 - No buffering. A message published while the connection is down is rejected,
   not queued.
+- The `IsConnectionOpen` guard in `Publish` leaves a window: if the connection
+  drops between the check and Paho's `Publish`, a QoS 0 message is lost
+  silently after all. Closing it would take a change in Paho; QoS 1 or 2 ends
+  in `ErrTimeout` instead.
 - Connect timeout, retry interval, publish timeout, quiesce and Paho's own
   `CleanSession`/`KeepAlive` are compiled-in constants rather than options,
   unlike the rest of the repository.
