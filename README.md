@@ -220,3 +220,7 @@ rediscover it:
 - A handler is unusable after `Disconnect`, and the error it then returns is
   called `ErrClientNotInitialized`.
 - Wildcards in a publish topic are not rejected.
+- A broker URL with an unknown scheme (a typo like `tpc://`) is not rejected:
+  `New` returns no error and Paho retries it every 2 s for good, failing with
+  "unknown protocol" each time. Only the timeout warning through `WithLogger`
+  shows it. Rejecting it would mean copying Paho's list of schemes.
