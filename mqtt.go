@@ -235,6 +235,13 @@ func (m *Handler) Disconnect() {
 	}
 }
 
+// current returns the client, or nil once Disconnect has run.
+func (m *Handler) current() mqttlib.Client {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.client
+}
+
 // Publish sends a message to the MQTT broker synchronously.
 // It waits up to publishTimeout for the broker to acknowledge the message.
 //
@@ -252,10 +259,7 @@ func (m *Handler) Publish(msg Message) error {
 		return ErrInvalidQos
 	}
 
-	m.mu.Lock()
-	client := m.client
-	m.mu.Unlock()
-
+	client := m.current()
 	if client == nil {
 		return ErrClientNotInitialized
 	}
@@ -264,15 +268,10 @@ func (m *Handler) Publish(msg Message) error {
 	}
 
 	token := client.Publish(msg.Topic, msg.Qos, msg.Retained, msg.Payload)
-
 	if !token.WaitTimeout(publishTimeout) {
 		return ErrTimeout
 	}
-	if err := token.Error(); err != nil {
-		return err
-	}
-
-	return nil
+	return token.Error()
 }
 
 // IsConnected reports whether the MQTT client considers itself connected.
@@ -282,26 +281,14 @@ func (m *Handler) Publish(msg Message) error {
 // never succeeded. It answers "is this handler still trying?", not "is the
 // broker reachable?"; for the latter use IsConnectionOpen.
 func (m *Handler) IsConnected() bool {
-	m.mu.Lock()
-	client := m.client
-	m.mu.Unlock()
-
-	if client == nil {
-		return false
-	}
-	return client.IsConnected()
+	client := m.current()
+	return client != nil && client.IsConnected()
 }
 
 // IsConnectionOpen reports whether a connection to the broker is open right now.
 // Unlike IsConnected it is false while a connect or reconnect is still pending,
 // which makes it the state to check before publishing.
 func (m *Handler) IsConnectionOpen() bool {
-	m.mu.Lock()
-	client := m.client
-	m.mu.Unlock()
-
-	if client == nil {
-		return false
-	}
-	return client.IsConnectionOpen()
+	client := m.current()
+	return client != nil && client.IsConnectionOpen()
 }

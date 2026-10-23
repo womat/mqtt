@@ -172,7 +172,7 @@ go test -race ./...
 MQTT_TEST_BROKER=tcp://localhost:1883 go test -count=1 -v ./...
 ```
 
-Coverage is 88.4 % of statements without a broker. `mqtt_test.go` runs without
+Coverage is 86.7 % of statements without a broker. `mqtt_test.go` runs without
 one: it substitutes a fake for the `mqtt.Client` interface, which is what makes
 the states above testable at all: a fake in the reconnecting state
 (`IsConnected() == true`, `IsConnectionOpen() == false`) is how the silent
