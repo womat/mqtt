@@ -53,6 +53,10 @@ jobs:
             echo "$diff" >&2
             exit 1
           fi
+      # Prints the diff and exits non-zero when go.mod or go.sum is not tidy;
+      # "go mod tidy" applies it.
+      - name: go mod tidy
+        run: go mod tidy -diff
       - name: go vet
         run: go vet ./...
       - name: golangci-lint
