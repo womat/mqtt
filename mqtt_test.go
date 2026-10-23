@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,8 +35,10 @@ func (t *fakeToken) Error() error                   { return t.err }
 // fakeClient records what the Handler asks of the client and lets a test
 // pretend the connection is in any of the states paho distinguishes.
 // Only the methods the Handler uses are implemented; the rest panic so that
-// an unnoticed new call site shows up immediately.
+// an unnoticed new call site shows up immediately. mu guards what Publish and
+// Disconnect record, so that a concurrent test races on the Handler, not here.
 type fakeClient struct {
+	mu             sync.Mutex
 	connected      bool // paho: true while connecting or reconnecting as well
 	connectionOpen bool // paho: true only while actually connected
 	publishErr     error
@@ -51,9 +54,15 @@ type fakeClient struct {
 func (c *fakeClient) IsConnected() bool      { return c.connected }
 func (c *fakeClient) IsConnectionOpen() bool { return c.connectionOpen }
 func (c *fakeClient) Connect() mqttlib.Token { return newFakeToken(nil) }
-func (c *fakeClient) Disconnect(uint)        { c.disconnects++ }
+func (c *fakeClient) Disconnect(uint) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.disconnects++
+}
 
 func (c *fakeClient) Publish(topic string, qos byte, retained bool, payload any) mqttlib.Token {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.publishCalls++
 	c.lastTopic = topic
 	c.lastQos = qos
@@ -206,6 +215,34 @@ func TestPublishAfterDisconnect(t *testing.T) {
 	h.Disconnect()
 	if client.disconnects != 1 {
 		t.Errorf("client.Disconnect called %d times after the second Disconnect, want 1", client.disconnects)
+	}
+}
+
+func TestDisconnectWhilePublishing(t *testing.T) {
+	// Only meaningful under -race (as CI runs it): without the Handler's mutex
+	// the detector reports Disconnect's write of the client against the reads.
+	client := connectedClient()
+	h := &Handler{client: client}
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() {
+			for range 100 {
+				err := h.Publish(Message{Topic: "a/b"})
+				if err != nil && !errors.Is(err, ErrClientNotInitialized) {
+					t.Errorf("Publish: %v, want nil or ErrClientNotInitialized", err)
+					return
+				}
+				h.IsConnected()
+				h.IsConnectionOpen()
+			}
+		})
+	}
+	wg.Go(h.Disconnect)
+	wg.Wait()
+
+	if client.disconnects != 1 {
+		t.Errorf("client.Disconnect called %d times, want 1", client.disconnects)
 	}
 }
 
