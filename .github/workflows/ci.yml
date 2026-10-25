@@ -3,6 +3,11 @@
 # Actions are pinned to a commit SHA, with the release in a comment: a tag like
 # @v7 can be moved to other code, a SHA cannot. dependabot (.github/dependabot.yml)
 # proposes updates for them.
+#
+# setup-go takes the version from go.mod but the newest patch of it (check-latest),
+# and the weekly run repeats govulncheck without a change here: an advisory against
+# the Go toolchain or a dependency appears between commits, and dependabot does not
+# report the toolchain.
 
 name: CI
 
@@ -10,6 +15,9 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 5 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -29,6 +37,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          check-latest: true
       # Pinned rather than @latest: a new release of either tool would
       # otherwise turn this job red without a change in this repository.
       # dependabot does not see pins in a run step; bump these by hand.
@@ -59,6 +68,12 @@ jobs:
         run: go mod tidy -diff
       - name: go vet
         run: go vet ./...
+      # The cross job builds for macOS and Windows but compiles no _test.go file;
+      # vet does, so a test that only breaks there is caught too.
+      - name: go vet (macOS, Windows)
+        run: |
+          GOOS=darwin go vet ./...
+          GOOS=windows go vet ./...
       - name: golangci-lint
         run: golangci-lint run ./...
       - name: govulncheck
@@ -72,6 +87,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          check-latest: true
       # No broker here: mqtt_test.go runs against a fake client, and the
       # example skips unless MQTT_TEST_BROKER names one.
       - name: go test
@@ -95,6 +111,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          check-latest: true
       - name: go build
         env:
           GOOS: ${{ matrix.goos }}

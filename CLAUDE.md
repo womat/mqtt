@@ -53,8 +53,10 @@ functional options.
 
 ## Known state
 
-**CI:** `.github/workflows/ci.yml`, on pushes to `main` and pull requests: gofmt, `go fix`, vet,
-golangci-lint, govulncheck, `go test -race -cover`, and a cross-compile for the Raspberry Pi
-targets, Windows and macOS. Actions are pinned to a commit SHA with the release in a comment;
+**CI:** `.github/workflows/ci.yml`, on pushes to `main`, pull requests, weekly and by hand: gofmt,
+`go fix -diff`, `go mod tidy -diff`, vet (also for macOS and Windows), golangci-lint, govulncheck,
+`go test -race -cover`, and a cross-compile for the Raspberry Pi targets, Windows and macOS.
+`setup-go` takes the Go version from `go.mod` with `check-latest`, so the weekly run catches a
+toolchain advisory without a commit. Actions are pinned to a commit SHA with the release in a comment;
 dependabot updates the pins and the Go dependencies in one group. The module declares `go 1.27`,
 the same as golib and its consumers; keep it in step.
